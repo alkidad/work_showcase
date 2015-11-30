@@ -1,0 +1,333 @@
+package com.seattleartspot;
+
+import static android.text.TextUtils.isEmpty;
+
+import java.util.List;
+
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
+import android.location.LocationManager;
+import android.net.Uri;
+import android.os.Bundle;
+import android.support.v4.app.NavUtils;
+import android.util.Log;
+import android.view.KeyEvent;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.actionbarsherlock.view.Menu;
+import com.actionbarsherlock.view.MenuItem;
+import com.google.analytics.tracking.android.EasyTracker;
+import com.google.analytics.tracking.android.Tracker;
+import com.seattleartspot.client.ClickCallback;
+import com.seattleartspot.model.AndroidArtImage;
+import com.seattleartspot.model.ArtImage;
+import com.seattleartspot.model.Theme;
+import com.seattleartspot.model.User;
+import com.seattleartspot.tasks.FetchJsonTask;
+import com.seattleartspot.tasks.Geocoder;
+import com.seattleartspot.tasks.MyGeoPoints;
+import com.seattleartspot.tasks.UpdateSeattleArtSpotTask;
+import com.seattleartspot.tasks.FetchJsonTask.FetchCallback;
+
+import com.google.android.gms.ads.AdRequest;
+import com.google.android.gms.ads.AdSize;
+import com.google.android.gms.ads.AdView;
+
+public class MapImageActivity extends BaseActivity {
+
+	// Seattle art Spot vaiables
+	
+	SharedPreferences sasSettings;
+	final Context context = this;
+	
+	double SeattleLat = 47.606209500000000000;
+	double SeattleLong = -122.332070800000000000;
+	
+	double myGeoCodelongitude = 0;
+    double myGeoCodelatitude = 0;
+    
+	 private LocationManager locationManager;
+	 private String provider;
+	 private String address = "";
+	 private String mImageId;
+     private String whereFrom = "";
+     private String mAction;
+     private ArtImage mPhoto;
+     private long themeId = 0;
+
+     private ImageView mPhotoView;
+    private TextView mAuthorName;
+    private ImageView mAuthorImage;
+    
+  
+    private EditText seattleArtistEdit;
+    
+    private TextView artSpotTitle;
+    private TextView seattleArtSpotComments;
+    private TextView seattleArtist;
+    
+    private ImageButton getMapDirectionsButton;
+    private UpdateSeattleArtSpotTask mUpdateSeattleArtTask;
+    private FetchJsonTask<ArtImage> mImageTask;
+    
+    private AdView adView;
+    private String DEBUG_TAG = "MapImageActivity";
+	  
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+       
+        setContentView(R.layout.art_spot_view_map_image);
+        Log.w(DEBUG_TAG, "We are inside create");
+
+        mPhotoView = (ImageView) findViewById(R.id.photo_item);
+        mAuthorName = (TextView) findViewById(R.id.author_name);
+        mAuthorImage = (ImageView) findViewById(R.id.author_image);
+        
+	      artSpotTitle= (TextView) findViewById(R.id.Seattle_Art_Spot_Title);
+	      seattleArtSpotComments = (TextView) findViewById(R.id.Seattle_Art_Spot_Comment);
+	      seattleArtist = (TextView) findViewById(R.id.Seattle_Art_Spot_Artist);
+	      getMapDirectionsButton = (ImageButton) findViewById(R.id.Get_Map_Directions);
+	    
+        if (null != getIntent() && getIntent().hasExtra(Intents.PHOTO_ID_EXTRA)) {
+            mImageId = (String) getIntent().getExtras().get(Intents.PHOTO_ID_EXTRA);
+           if( getIntent().hasExtra(Intents.THEME_ID_EXTRA)) {
+                themeId = (Long) getIntent().getExtras().get(Intents.THEME_ID_EXTRA);
+           }
+           if  (getIntent().hasExtra(Intents.WHERE_FROM_EXTRA))
+           {
+            whereFrom = (String) getIntent().getExtras().get(Intents.WHERE_FROM_EXTRA);
+           }
+        }
+       
+
+       if (mImageId != null) {
+        
+        	
+            String imageUrl = String.format(Endpoints.SEATTLE_ART_IMAGE, mImageId);
+            mImageTask = new FetchJsonTask<ArtImage>(imageUrl) {
+                { mReturnType = ArtImage.class; }
+                
+                @Override
+                protected void onSuccess(ArtImage result) {
+                    mPhoto = result;
+                    
+                    Log.d(DEBUG_TAG, "in the success section just about to initArt");
+                   
+                    getMapDirectionsButton.setOnClickListener(new View.OnClickListener() {
+                        public void onClick(final View view) {
+                        	
+                      	  Intent showMapDirections = new Intent(MapImageActivity.this, MapsDirectionActivity.class);
+                        
+                             showMapDirections.putExtra(Intents.ART_SPOT_LATITUDE_EXTRA, mPhoto.getLatitude());
+                             showMapDirections.putExtra(Intents.ART_SPOT_LONGITUDE_EXTRA, mPhoto.getLongitude());
+                             showMapDirections.putExtra(Intents.ART_SPOT_TITLE_EXTRA, mPhoto.getTitle());
+                             
+                            startActivity(showMapDirections);
+                        	 view.setEnabled(false);
+                             finish();
+                        }
+                    });
+                  
+                        update();
+                                 
+                    trackAnalytics();
+                   
+                }
+            };
+
+            mImageTask.execute();
+        }
+
+       
+        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        getSupportActionBar().setHomeButtonEnabled(true);
+
+        update();
+        
+        adView = (AdView)findViewById(R.id.Ad_Id);
+ 	   
+ 	        AdRequest adRequest = new AdRequest.Builder()
+ 	            .addTestDevice(AdRequest.DEVICE_ID_EMULATOR)
+ 	            .addTestDevice("015d2ebe8c0bfa18")
+ 	            .build();
+
+ 	        // Start loading the ad in the background.
+ 	        adView.loadAd(adRequest);
+ 	      }
+
+   
+ private void initArtSpotEntry() {
+           
+     if(mPhoto.getTitle() != null && mPhoto.getTitle().length() > 0)
+     {
+     	 artSpotTitle.setText("Title: " + mPhoto.getTitle()); 
+     }
+     else
+     {
+    	 artSpotTitle.setText(""); 
+     }
+   
+     if(mPhoto.getArtistName() != null && mPhoto.getArtistName().length() > 0)
+     {
+     	seattleArtist.setText("Artist name: " + mPhoto.getArtistName());
+     }
+     else
+     {
+    	 seattleArtist.setText(""); 
+     }
+   
+     
+   
+     if(mPhoto.getComments() != null && mPhoto.getComments().length() > 0)
+     {
+     	seattleArtSpotComments.setText("Comments: " + mPhoto.getComments());
+     }
+     else
+     {
+    	 seattleArtSpotComments.setText(""); 
+     }
+         
+	  
+    }
+ 
+
+    public void update() {
+       
+        
+        if (mPhoto != null) {
+        	
+        	 initArtSpotEntry();
+        	 voteCount.setText(getString(R.string.vote_count, mPhoto.numVotes));
+
+                if (mPhoto.ownerUserId != null) {
+                    mAuthorName.setText(mPhoto.ownerDisplayName);
+
+                    if (!isEmpty(mPhoto.ownerProfilePhoto)) {
+                        mImageLoader.bind(mAuthorImage, mPhoto.ownerProfilePhoto, null);
+
+                        mAuthorImage.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View view) {
+                                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(mPhoto.ownerProfilePhoto)));
+                            }
+                        });
+                    }
+                } else {
+                    mAuthorName.setText(getString(R.string.unknown_user));
+                }
+
+                mImageLoader.bind(mPhotoView, mPhoto.thumbnailUrl, null);
+                   
+             
+            }
+       
+    }
+    
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        super.onCreateOptionsMenu(menu);
+        menu.add(0, R.id.menu_item_about, 0, getString(R.string.about_menu_title))
+        .setIcon(R.drawable.ic_popup_sync_2)
+        .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER | MenuItem.SHOW_AS_ACTION_WITH_TEXT);
+        
+        menu.add(0, R.id.menu_item_back_to_menu, 0, getString(R.string.art_spot_menu))
+        .setIcon(R.drawable.ic_popup_sync_2)
+        .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER | MenuItem.SHOW_AS_ACTION_WITH_TEXT);
+
+    return true;
+    }
+
+
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+        case android.R.id.home:
+        {
+       	 if(whereFrom.equals("fromMapActivity"))
+            {
+            	//  I think this should help for 
+       		 Intent themeMap = new Intent(MapImageActivity.this, ThemeMapActivity.class);
+       		 if(themeId != 0)
+       		 {
+       		 themeMap.putExtra(Intents.THEME_ID_EXTRA, themeId);
+       		 }
+            	 NavUtils.navigateUpTo(MapImageActivity.this, themeMap);
+               	 return true;
+            	
+            }
+            else
+            {	
+            	
+           	 NavUtils.navigateUpTo(this, new Intent(this, ThemeViewActivity.class));
+                return true;
+            }
+           }
+            case R.id.menu_item_about:
+            {
+            	Intent aboutIntent = new Intent();
+        		aboutIntent.setClass(this, AboutActivity.class);
+        		startActivity(aboutIntent);
+        		return true;
+            }
+            case R.id.menu_item_back_to_menu:
+            {
+            	Intent aboutIntent2 = new Intent();
+    			aboutIntent2.setClass(this, SeattleArtSpot_MenuActivity.class);
+    			startActivity(aboutIntent2);
+    			return true;
+            }	
+               
+        }
+
+        return super.onOptionsItemSelected(item);
+    }
+
+
+   
+
+    @Override
+    public void setAuthenticatedProfile(User profile) {
+        super.setAuthenticatedProfile(profile);
+
+        trackAnalytics();
+    }
+
+    @Override
+    public void onSignInFailed() {
+        super.onSignInFailed();
+
+        trackAnalytics();
+    }
+
+    private void trackAnalytics() {
+        EasyTracker.getInstance().setContext(this);
+        Tracker tracker = EasyTracker.getInstance().getTracker();
+
+        if (mPhotoUser != null) {
+            tracker.set("&uid", mPhotoUser.id.toString());
+        } else {
+            tracker.set("&uid", null);
+        }
+
+        if (mPhoto != null) {
+            tracker.trackView("image/" + mPhoto.id);
+        }
+    }
+
+
+}
