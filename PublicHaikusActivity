@@ -1,0 +1,1496 @@
+package com.haiku.you;
+
+import android.app.ProgressDialog;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.DialogInterface.OnCancelListener;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.AsyncTask;
+import android.os.Bundle;
+import android.support.v4.app.FragmentActivity;
+import android.support.v4.app.LoaderManager;
+import android.support.v4.content.CursorLoader;
+import android.support.v4.content.Loader;
+import android.util.DisplayMetrics;
+import android.util.Log;
+import android.util.TypedValue;
+import android.view.Display;
+import android.view.Gravity;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewTreeObserver;
+import android.view.animation.Animation;
+import android.view.animation.AnimationUtils;
+import android.widget.Button;
+import android.widget.ImageSwitcher;
+import android.widget.ImageView;
+import android.widget.RelativeLayout;
+import android.widget.TextSwitcher;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.widget.ViewSwitcher;
+
+import java.io.BufferedReader;
+import java.io.BufferedInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.StringReader;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.List;
+
+import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.BitmapDrawable; 
+import android.graphics.drawable.Drawable;
+ 
+import android.content.Intent;
+import com.google.gson.Gson;
+import com.haiku.you.app.HaikuApp;
+import com.haiku.you.provider.HaikuProvider;
+import com.haiku.you.service.PublicHaikuReciever;
+import com.haiku.you.service.PublicHaikuService;
+
+import java.util.ArrayList;
+
+
+public class PublicHaikusActivity extends FragmentActivity implements HaikuForYouInterface, LoaderManager.LoaderCallbacks<Cursor> {
+	SharedPreferences mHaikuSettings;
+	
+	private HaikuImageTask haikuImageTask;
+	private MemberImageTask memberImageTask;
+	final Context context = this;
+	private static final String DEBUG_TAG = "Public Haikus";
+
+	HashMap<Integer, LargeHaikuPlus> mHaikus;
+
+	    private RelativeLayout publicRelativeLayout;
+	    private TextSwitcher haikuText;
+	    private TextSwitcher haikuTitle;
+	    private ImageSwitcher haikuImage;
+	    
+	    private TextSwitcher memberName;
+	    private ImageSwitcher memberImage;
+	    HaikuTask downloader;
+
+	    private int screenWidth;
+	    private int startingHaikuNumber;
+	    private int screenHeigth;
+	    private int pass = 0;
+	    private Button previousButton;
+	    private Button nextButton;
+
+	PublicHaikuReciever mReceiver;
+
+	private static final int LIST_PUBLIC_HAIKUS = 6;
+
+	 @Override
+	    public void onCreate(Bundle savedInstanceState) {
+	        super.onCreate(savedInstanceState);
+	        if(isTablet())
+	         {
+	        	
+	        	setContentView(R.layout.public_haikus_2);
+	         }
+	         else
+	         {
+	        	setContentView(R.layout.public_haikus);
+	         }
+
+	        mHaikuSettings = getSharedPreferences(HAIKU_PREFERENCES, Context.MODE_PRIVATE);
+
+		 HaikuApp myApplication = (HaikuApp) this.getApplicationContext();
+		 myApplication.publicHaikusActivity = this;
+	     
+	        // Initialize question batch
+		 mHaikus = new HashMap<Integer, LargeHaikuPlus>();
+	  	 startingHaikuNumber = mHaikuSettings.getInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, 0);
+
+		 // We could possibly start at zero, Linked list can start zero
+		 if (startingHaikuNumber == 0) {
+			 startingHaikuNumber = 1;
+			 Editor editor = mHaikuSettings.edit();
+			 editor.putInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, startingHaikuNumber);
+			 editor.commit();
+		 }
+	        // in the meantime, configure UI
+	        // Handle yes button
+		    previousButton = (Button) findViewById(R.id.Public_Button_Left);
+	        previousButton.setOnClickListener(new View.OnClickListener() {
+	            @Override
+				public void onClick(View v) {
+	            	String previous = "previous";
+	            	handleHaikuAndShowNextOrPreviousHaiku(previous);
+	            }
+	        });
+
+	        // Handle no button
+		    nextButton = (Button) findViewById(R.id.Public_Button_Right);
+	        nextButton.setOnClickListener(new View.OnClickListener() {
+				@Override
+				public void onClick(View v) {
+					String previous = "next";
+					handleHaikuAndShowNextOrPreviousHaiku(previous);
+				}
+			});
+
+		 publicRelativeLayout = (RelativeLayout) findViewById(R.id.Public_RelativeLayout_Content);
+
+		 publicRelativeLayout.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener()
+		 {
+			 @Override
+			 public void onGlobalLayout()
+			 {
+				 // gets called after layout has been done but before display.
+				 publicRelativeLayout.getViewTreeObserver().removeGlobalOnLayoutListener(this);
+
+				 // get width and height
+				 screenWidth  = publicRelativeLayout.getWidth();
+				 screenHeigth = publicRelativeLayout.getHeight();
+
+				 // Set up Text Switcher
+				 Animation in = AnimationUtils.loadAnimation(PublicHaikusActivity.this, android.R.anim.fade_in);
+				 Animation out = AnimationUtils.loadAnimation(PublicHaikusActivity.this, android.R.anim.fade_out);
+
+				 haikuText = (TextSwitcher) findViewById(R.id.Public_TextSwitcher_HaikuText);
+				 haikuText.setInAnimation(in);
+				 haikuText.setOutAnimation(out);
+				 haikuText.setFactory(new MyTextSwitcherFactory());
+
+				 haikuTitle = (TextSwitcher) findViewById(R.id.Public_TextSwitcher_HaikuTitle);
+				 haikuTitle.setInAnimation(in);
+				 haikuTitle.setOutAnimation(out);
+				 haikuTitle.setFactory(new MyTitleSwitcherFactory());
+
+				 haikuImage = (ImageSwitcher) findViewById(R.id.Public_ImageSwitcher_HaikuImage);
+				 haikuImage.setInAnimation(in);
+				 haikuImage.setOutAnimation(out);
+				 haikuImage.setFactory(new MyImageSwitcherFactory());
+
+				 //
+				 memberName = (TextSwitcher) findViewById(R.id.Public_TextSwitcher_MemberName);
+				 memberName.setInAnimation(in);
+				 memberName.setOutAnimation(out);
+				 memberName.setFactory(new MyMemberTextSwitcherFactory());
+
+				 memberImage = (ImageSwitcher) findViewById(R.id.Public_ImageSwitcher_MemberImage);
+				 memberImage.setInAnimation(in);
+				 memberImage.setOutAnimation(out);
+				 memberImage.setFactory(new MyMemberImageSwitcherFactory());
+
+				 getSupportLoaderManager().initLoader(LIST_PUBLIC_HAIKUS, null, PublicHaikusActivity.this);
+			 }
+		 });
+
+
+	    }
+
+	@Override
+	public void onResume() {
+		super.onResume();
+		pass = 0;
+		IntentFilter intentFilter = new IntentFilter("com.haiku.you.updatePublicHaiku");
+
+		if(mReceiver == null)
+		{
+			mReceiver = new PublicHaikuReciever();
+		}
+
+		//registering our receiver
+		this.registerReceiver(mReceiver, intentFilter);
+
+
+	}
+
+
+	@Override
+	protected void onPause() {
+		// TODO Auto-generated method stub
+		super.onPause();
+		//unregister our receiver
+		if(mReceiver != null)
+			this.unregisterReceiver(this.mReceiver);
+	}
+
+
+	public void updatePublicHaikus()
+	{
+		getSupportLoaderManager().initLoader(LIST_PUBLIC_HAIKUS, null, this);
+
+		startingHaikuNumber = mHaikuSettings.getInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, 0);
+
+		// We could possibly start at zero, Linked list can start zero
+		if (startingHaikuNumber == 0) {
+			startingHaikuNumber = 1;
+			Editor editor = mHaikuSettings.edit();
+			editor.putInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, startingHaikuNumber);
+			editor.commit();
+		}
+	}
+
+	public void resetPublicHaikuList()
+	{
+		startingHaikuNumber = 1;
+		Editor editor = mHaikuSettings.edit();
+		editor.putInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, startingHaikuNumber);
+		editor.commit();
+
+		if (mHaikus.containsKey(startingHaikuNumber) == true) {
+
+			// Set the text of the textswitcher
+
+			haikuTitle.setCurrentText(getHaikuTitle(startingHaikuNumber));
+			haikuText.setCurrentText(getHaikuText(startingHaikuNumber));
+
+			String uniqueId = null;
+
+			uniqueId = getHaikuImageUniqueID(startingHaikuNumber);
+
+
+			String haikuThumbnailUrl = getHaikuThumbnailUrl(startingHaikuNumber);
+
+			if(haikuThumbnailUrl != null && haikuThumbnailUrl.length() >0)
+			{
+
+				uploadHaikuImage(startingHaikuNumber);
+			}
+			else
+			{
+				haikuImage.setImageResource(R.drawable.haiku_head2);
+			}
+
+			String memberThumbNailUrl = getMemberThumbnailUrl(startingHaikuNumber);
+
+			if(memberThumbNailUrl != null && memberThumbNailUrl.length() > 0)
+			{
+				uploadMemberImage(startingHaikuNumber);
+
+			}
+			else
+			{
+
+				memberImage.setImageResource(R.drawable.haiku_head2);
+			}
+
+			String memberName2 = getMemberName(startingHaikuNumber);
+			if(memberName2 != null)
+			{
+				memberName.setCurrentText(getMemberName(startingHaikuNumber));
+			}
+			else
+			{
+				memberName.setCurrentText("");
+			}
+
+
+
+		} else {
+			// Tell the user we don't have any new Haikus at this time
+			handleNoHaikus("Sorry, no public haiku at the moment.");
+		}
+
+	}
+
+	 private void displayCurrentHaiku(int startingHaikuNumber) {
+		 Log.d("Public Haikus ", "Display current haiku number: " + startingHaikuNumber);
+		
+	        if (mHaikus.containsKey(startingHaikuNumber) == true) {
+
+				// Set the text of the textswitcher
+
+				haikuTitle.setCurrentText(getHaikuTitle(startingHaikuNumber));
+				haikuText.setCurrentText(getHaikuText(startingHaikuNumber));
+
+				String uniqueId = null;
+
+				uniqueId = getHaikuImageUniqueID(startingHaikuNumber);
+
+
+				String haikuThumbnailUrl = getHaikuThumbnailUrl(startingHaikuNumber);
+
+				if (haikuThumbnailUrl != null && haikuThumbnailUrl.length() > 0) {
+
+					uploadHaikuImage(startingHaikuNumber);
+				} else {
+					haikuImage.setImageResource(R.drawable.haiku_head2);
+				}
+
+				String memberThumbNailUrl = getMemberThumbnailUrl(startingHaikuNumber);
+
+				if (memberThumbNailUrl != null && memberThumbNailUrl.length() > 0) {
+					uploadMemberImage(startingHaikuNumber);
+
+				} else {
+
+					memberImage.setImageResource(R.drawable.haiku_head2);
+				}
+
+				String memberName2 = getMemberName(startingHaikuNumber);
+				if (memberName2 != null) {
+					memberName.setCurrentText(getMemberName(startingHaikuNumber));
+				} else {
+					memberName.setCurrentText("");
+				}
+
+			} else if(mHaikus.size()  > 0)
+			{
+				resetPublicHaikuList();
+	      
+	        } else {
+	            // Tell the user we don't have any new Haikus at this time
+	            handleNoHaikus("Sorry, no public haiku at the moment.");
+	        }
+	    }
+
+	    @Override
+	    public boolean onCreateOptionsMenu(Menu menu) {
+	        super.onCreateOptionsMenu(menu);
+	        
+	        String empty = "";
+     	    	 
+  	    	    Editor editor = mHaikuSettings.edit();
+               editor.putString(HAIKU_KEY_STRING, empty);
+               if(mHaikuSettings.contains(HAIKU_TEXT_LINE_ONE))
+               {	
+               editor.putString(HAIKU_TEXT_LINE_ONE, empty);
+               }
+               
+            if(mHaikuSettings.contains(HAIKU_TEXT_LINE_TWO))
+            {	
+            editor.putString(HAIKU_TEXT_LINE_TWO, empty);
+            }
+            
+             if(mHaikuSettings.contains(HAIKU_TEXT_LINE_THREE))
+            {	
+            editor.putString(HAIKU_TEXT_LINE_THREE, empty);
+            }
+               
+               
+              if(mHaikuSettings.contains(HAIKU_TITLE))
+            {	
+           	editor.putString(HAIKU_TITLE, empty);
+            }
+              
+              if(mHaikuSettings.contains(HAIKU_IMAGE))
+              {
+           	   editor.putString(HAIKU_IMAGE, empty);
+              }
+               
+               editor.commit();
+
+	        getMenuInflater().inflate(R.menu.menu_public_options, menu);
+	        menu.findItem(R.id.help_menu_item).setIntent(new Intent(this, HaikuHelpActivity.class));
+	        menu.findItem(R.id.menu_haiku_menu_item).setIntent(new Intent(this, HaikuMenuActivity.class));
+	        menu.findItem(R.id.create_haiku_menu_item).setIntent(new Intent(this, HaikuCreateActivity.class));
+	        menu.findItem(R.id.settings_menu_item).setIntent(new Intent(this, HaikuSettingsActivity.class));
+	        return true;
+	    }
+
+	    @Override
+	    public boolean onOptionsItemSelected(MenuItem item) {
+	        super.onOptionsItemSelected(item);
+	        startActivity(item.getIntent());
+	        return true;
+	    }
+
+	    /**
+	     * A switcher factory for use with the question image. Creates the next {@code ImageView} object to animate to
+	     * 
+	     */
+	    private class MyImageSwitcherFactory implements ViewSwitcher.ViewFactory {
+	        @Override
+			public View makeView() {
+	            ImageView imageView = new ImageView(PublicHaikusActivity.this);
+	            imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+	            imageView.setLayoutParams(new ImageSwitcher.LayoutParams(android.view.ViewGroup.LayoutParams.FILL_PARENT, android.view.ViewGroup.LayoutParams.FILL_PARENT));
+	            return imageView;
+	        }
+	    }
+	    
+	    private class MyMemberImageSwitcherFactory implements ViewSwitcher.ViewFactory {
+	        @Override
+			public View makeView() {
+	            ImageView imageView = new ImageView(PublicHaikusActivity.this);
+	            imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+	            
+	             boolean isTablet = isTablet();
+	             
+	             if(!isTablet)
+	            	 imageView.setMaxHeight(30);
+	            	 
+	             
+	            imageView.setLayoutParams(new ImageSwitcher.LayoutParams(android.view.ViewGroup.LayoutParams.FILL_PARENT, android.view.ViewGroup.LayoutParams.FILL_PARENT));
+	            return imageView;
+	        }
+	    }
+
+	    /**
+	     * A switcher factory for use with the question text. Creates the next {@code TextView} object to animate to
+	     * 
+	     */
+	    private class MyTextSwitcherFactory implements ViewSwitcher.ViewFactory {
+	    	
+	    	
+	    	
+	        @Override
+			public View makeView() {
+	        	
+                 boolean isTablet = isTablet();
+	             
+	             if(isTablet)
+	             {
+
+
+	        	
+	            TextView textView = new TextView(PublicHaikusActivity.this);
+	            textView.setGravity(Gravity.CENTER);
+	            Resources res = getResources();
+				double dimension2 = (double) screenWidth  * .02 ;
+
+
+					 float dimension = (float)dimension2;
+
+					 int titleColor = res.getColor( R.color.title_color);
+					 int shadowColor = res.getColor(R.color.title_glow);
+
+					 textView.setTextSize(dimension);
+	                 textView.setTextColor(titleColor);
+	                 textView.setShadowLayer(10, 5, 5, shadowColor);
+	            return textView;
+	             }
+	            else
+	            {
+
+		            TextView textView = new TextView(PublicHaikusActivity.this);
+		            textView.setGravity(Gravity.CENTER);
+		            Resources res = getResources();
+					double dimension2 = (double) screenWidth  * .02 ;
+
+					float dimension = (float)dimension2;
+
+		            int titleColor = res.getColor(R.color.title_color);
+		            int shadowColor = res.getColor(R.color.title_glow);
+					textView.setTextSize(dimension);
+		            textView.setTextColor(titleColor);
+		            textView.setShadowLayer(10, 5, 5, shadowColor);
+		            return textView;	
+	            	
+	            }
+	        }
+	    }
+	    
+	    private class MyMemberTextSwitcherFactory implements ViewSwitcher.ViewFactory {
+	        @Override
+			public View makeView() {
+	        	
+	        	   boolean isTablet = isTablet();
+		             
+		             if(isTablet)
+		             {
+		            	 
+		             
+	            TextView textView = new TextView(PublicHaikusActivity.this);
+	            textView.setGravity(Gravity.LEFT);
+	            Resources res = getResources();
+						 double dimension2 = (double) screenWidth  * .015 ;
+
+						 float dimension = (float)dimension2;
+	            int titleColor = res.getColor(R.color.title_color);
+	            int shadowColor = res.getColor(R.color.title_glow);
+	            textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, dimension);
+	            textView.setTextColor(titleColor);
+	            textView.setShadowLayer(10, 5, 5, shadowColor);
+	            return textView;
+		             }
+		             else
+		             {
+		                 
+		 	            TextView textView = new TextView(PublicHaikusActivity.this);
+		 	            textView.setGravity(Gravity.LEFT);
+		 	            Resources res = getResources();
+						 double dimension2 = (double) screenWidth  * .015 ;
+
+						 float dimension = (float)dimension2;
+		 	            int titleColor = res.getColor(R.color.title_color);
+		 	            int shadowColor = res.getColor(R.color.title_glow);
+		 	            textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, dimension);
+		 	            textView.setTextColor(titleColor);
+		 	            textView.setShadowLayer(10, 5, 5, shadowColor);
+		 	            return textView; 
+		            	 
+		             }
+		             
+	        }
+	    }
+	    
+	    private class MyTitleSwitcherFactory implements ViewSwitcher.ViewFactory {
+	        @Override
+			public View makeView() {
+	        	
+	        	 boolean isTablet = isTablet();
+	             
+	             if(isTablet)
+	             {
+	            	
+	            TextView textView = new TextView(PublicHaikusActivity.this);
+	            textView.setGravity(Gravity.CENTER);
+	            Resources res = getResources();
+					 double dimension2 = (double) screenWidth  * .03 ;
+					 float dimension = (float)dimension2;
+	            int titleColor = res.getColor(R.color.title_color);
+	            int shadowColor = res.getColor(R.color.title_glow);
+	            textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, dimension);;
+	            textView.setTextColor(titleColor);
+	            textView.setShadowLayer(10, 5, 5, shadowColor);
+	            return textView;
+	             }
+	             else
+	             {
+	            	 
+	            	 TextView textView = new TextView(PublicHaikusActivity.this);
+	 	            textView.setGravity(Gravity.CENTER);
+	 	            Resources res = getResources();
+					 double dimension2 = (double) screenWidth  * .03 ;
+					 float dimension = (float)dimension2;
+	 	            int titleColor = res.getColor(R.color.title_color);
+	 	            int shadowColor = res.getColor(R.color.title_glow);
+	 	            textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, dimension);;
+	 	            textView.setTextColor(titleColor);
+	 	            textView.setShadowLayer(10, 5, 5, shadowColor);
+	 	            return textView;
+	            	 
+	             }
+	        }
+	    }
+
+	    
+	    private void handleHaikuAndShowNextOrPreviousHaiku(String nextOrPrevious) {
+	        
+	    	
+	        int nextHaikuNumber = mHaikuSettings.getInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, 1) + 1;
+	        int previousHaikuNumber =  mHaikuSettings.getInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, 1) - 1;
+	        int currentHaikuNumber = 1;
+
+	        Editor editor = mHaikuSettings.edit();
+	        
+	        if(nextOrPrevious.equals("next"))
+	        {	
+	        editor.putInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, nextHaikuNumber);
+	        currentHaikuNumber = nextHaikuNumber;
+	        }
+	        else if(nextOrPrevious.equals("previous") && previousHaikuNumber > 0)
+	        {
+	        editor.putInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, previousHaikuNumber);
+	        currentHaikuNumber = previousHaikuNumber;
+	        }
+	        else
+	        {
+	         editor.putInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, 1);
+	        }
+
+	      
+	        editor.commit();
+
+
+	            displayCurrentHaiku(currentHaikuNumber);
+
+	    }
+
+	    
+	    private void handleNoHaikus(String message) {
+	    	// this sets the  display text and images to empty and the default imat
+	        TextSwitcher haikuTextSwitcher = (TextSwitcher) findViewById(R.id.Public_TextSwitcher_HaikuText);
+	        haikuTextSwitcher.setText(message);
+	        TextSwitcher haikuTitleSwitcher = (TextSwitcher) findViewById(R.id.Public_TextSwitcher_HaikuTitle);
+	        String empty = "";
+	        haikuTitleSwitcher.setText(empty);
+	        ImageSwitcher haikuImageSwitcher = (ImageSwitcher) findViewById(R.id.Public_ImageSwitcher_HaikuImage);
+	        haikuImageSwitcher.setImageResource(R.drawable.buddha);
+	        
+	        TextSwitcher memberName = (TextSwitcher) findViewById(R.id.Public_TextSwitcher_MemberName);
+	        memberName.setText("");
+
+	        ImageSwitcher memberImage = (ImageSwitcher) findViewById(R.id.Public_ImageSwitcher_MemberImage);
+	        memberImage.setImageResource(R.drawable.buddha);
+	        
+	        // set the starting number back to one
+
+	        int startingHaikuNumber2 = 1;
+	        Editor editor = mHaikuSettings.edit();
+            editor.putInt(PUBLIC_HAIKU_PREFERENCES_CURRENT_HAIKU, startingHaikuNumber2);
+	        // Disable noy button
+	       
+	        // in the meantime, configure UI
+	        // Handle yes button
+	        Button previousButton = (Button) findViewById(R.id.Public_Button_Left);
+	        previousButton.setOnClickListener(new View.OnClickListener() {
+	            @Override
+				public void onClick(View v) {
+	            	
+	            	   int startingHaikuNumber = 1;
+
+	            }
+	        });
+
+
+	        // Disable no button
+	        Button noButton = (Button) findViewById(R.id.Public_Button_Right);
+	      
+	        
+	        noButton.setOnClickListener(new View.OnClickListener() {
+	            @Override
+				public void onClick(View v) {
+	            	
+	            	 startActivity(new Intent(PublicHaikusActivity.this, HaikuMenuActivity.class));
+	            	 // also close this actvitiy
+	            	 PublicHaikusActivity.this.finish(); 
+	            }
+	        });
+
+	    }
+
+	  
+	    private String getHaikuText(Integer haikuNumber) {
+	        String text = "";
+
+	        LargeHaikuPlusUrl curHaiku = mHaikus.get(haikuNumber);
+	        if (curHaiku != null) {
+	        	if(curHaiku.getTheHaiku() != null)
+	        	{
+	        		  text = curHaiku.getTheHaiku();
+	        	}
+	          
+	          
+	        }
+	        return text;
+	    }
+	    
+	    
+	    private String getHaikuTitle(Integer haikuNumber) {
+	        String text = "";
+
+	        LargeHaikuPlusUrl curHaiku = mHaikus.get(haikuNumber);
+	        if (curHaiku != null) {
+	        	if(curHaiku.getTitle() != null)
+	        	{
+	        	        text = curHaiku.getTitle();
+	        	}
+	           
+	        }
+	        return text;
+	    }
+	    
+	    private String getHaikuKeyString(Integer haikuNumber) {
+	        String text = "";
+
+	        LargeHaikuPlusUrl curHaiku = mHaikus.get(haikuNumber);
+	        if (curHaiku != null) {
+	        	if( curHaiku.getUniqueID() != null)
+	        	{
+	            text = curHaiku.getUniqueID();  // this should be the key String
+	        	}
+
+	        }
+	        return text;
+	    }
+
+
+	    /**
+	     * Returns a {@code String} representing the URL to an image for a particular haiku
+	     * 
+	     * @param haikuNumber
+	     *            The unique for the Haiku to get the URL for
+	     * @return A {@code String} for the URL or null if none found    
+	     */
+	    private String getHaikuImageUniqueID(Integer haikuNumber) {
+	        String url = null;
+	        LargeHaikuPlusUrl curHaiku = mHaikus.get(haikuNumber);
+	        if (curHaiku!= null) {
+	        	if( curHaiku.getHaikuImageUniqueID() != null)
+	        	{
+	        		 url = curHaiku.getHaikuImageUniqueID();  // this should be the key String
+	        	}
+	           
+	          
+	        }
+	        return url;
+	    }
+
+	    private String getHaikuThumbnailUrl(Integer haikuNumber) {
+	        String url = null;
+	        LargeHaikuPlusUrl curHaiku = mHaikus.get(haikuNumber);
+	        if (curHaiku!= null) {
+	        	if( curHaiku.getThumbNailUrl() != null)
+	        	{
+	        		 url = curHaiku.getThumbNailUrl();  
+	        	}
+	           
+	            
+	          
+	        }
+	        return url;
+	    }
+	    
+	    private String getMemberThumbnailUrl(Integer  haikuNumber) {
+	        String url = null;
+	        LargeHaikuPlusUrl curHaiku = mHaikus.get(haikuNumber);
+	        if (curHaiku!= null) {
+	        	if( curHaiku.getMemberThumbNailUrl() != null)
+	        	{
+	        		url = curHaiku.getMemberThumbNailUrl(); 
+	        	}
+	           
+	            
+	          
+	        }
+	        return url;
+	    }
+	    
+	    private String getMemberName(Integer  haikuNumber) {
+	        String url = null;
+	        LargeHaikuPlusUrl curHaiku = mHaikus.get(haikuNumber);
+	        if (curHaiku!= null) {
+	        	
+	        	if( curHaiku.getMemberName() != null)
+	        	{
+	        		 url = curHaiku.getMemberName();
+	        	}
+	           
+	          
+	        }
+	        return url;
+	    }
+	    
+	    private String getMemberEmail(Integer  haikuNumber) {
+	        String url = null;
+	        LargeHaikuPlusUrl curHaiku = mHaikus.get(haikuNumber);
+	        if (curHaiku!= null) {
+
+	        	if( curHaiku.getMemberEmail() != null)
+	        	{
+	        		 url = curHaiku.getMemberEmail();
+	        	}
+	          
+	          
+	        }
+	        return url;
+	    }
+	    
+	    boolean spinnerInitCall = true;
+	    
+	 
+		
+
+
+
+	    /**
+	     * Upload a new or modified image to the com.mikeraney.Haiku.server
+	     */
+	    
+	    
+	    // could do it below way, but it's not necessary to make calls to the database
+	    
+	    private void uploadHaikuImage(int currentHaikuNumber) {
+	        // make sure we don't collide with another pending update
+	        if (haikuImageTask == null || haikuImageTask.getStatus() == AsyncTask.Status.FINISHED || haikuImageTask.isCancelled()) {
+	        	haikuImageTask = new HaikuImageTask();
+	        	Integer num = new Integer(currentHaikuNumber);
+	        	haikuImageTask.execute(num);
+	        } else {
+	            Log.w(DEBUG_TAG, "Warning: upload task already going");
+	        }
+	    }
+	    
+	    
+	    
+	    private void uploadMemberImage(int currentHaikuNumber) {
+	        // make sure we don't collide with another pending update
+	        if (memberImageTask == null || memberImageTask.getStatus() == AsyncTask.Status.FINISHED || memberImageTask.isCancelled()) {
+	        	memberImageTask = new MemberImageTask();
+	        	Integer num = new Integer(currentHaikuNumber);
+	        	memberImageTask.execute(num);
+	        } else {
+	            Log.w(DEBUG_TAG, "Warning: upload task already going");
+	        }
+	    }
+	    
+	   
+
+	 private class HaikuTask extends AsyncTask<Object, String, Boolean> {
+	        private static final String DEBUG_TAG = "PublicHaikusActivity$HaikuTask";
+
+	        int startingNumber;
+	        ProgressDialog pleaseWaitDialog;
+
+	        @Override
+	        protected void onCancelled() {
+	          
+	            handleNoHaikus("Sorry, no public haiku.");
+				if(pleaseWaitDialog != null)
+					pleaseWaitDialog.dismiss();
+	        }
+
+	        @Override
+	        protected void onPostExecute(Boolean result) {
+	            
+	            if (result) {
+	                displayCurrentHaiku(startingNumber);
+	                Button previousButton = (Button) findViewById(R.id.Public_Button_Left);
+	                previousButton.setEnabled(true);
+	    	        Button noButton = (Button) findViewById(R.id.Public_Button_Right);
+	    	        noButton.setEnabled(true);
+	    	         noButton.setOnClickListener(new View.OnClickListener() {
+	    		            @Override
+							public void onClick(View v) {
+	    		            	String previous = "next";
+	    		            	handleHaikuAndShowNextOrPreviousHaiku(previous);
+	    		            }
+	    		        });
+	    	        
+	    		        previousButton.setOnClickListener(new View.OnClickListener() {
+	    		            @Override
+							public void onClick(View v) {
+	    		            	String previous = "previous";
+	    		            	handleHaikuAndShowNextOrPreviousHaiku(previous);
+	    		            }
+	    		        });
+	    	            
+	            } else {
+	            		            	
+	                handleNoHaikus("Sorry, no public haiku. Try later");
+	                	                
+	            }
+
+
+				if(pleaseWaitDialog != null)
+					pleaseWaitDialog.dismiss();
+	        }
+
+	        @Override
+	        protected void onPreExecute() {
+	            pleaseWaitDialog = ProgressDialog.show(PublicHaikusActivity.this, "Public Haikus", "uploading a few ..", true, true);
+	            pleaseWaitDialog.setOnCancelListener(new OnCancelListener() {
+	                @Override
+					public void onCancel(DialogInterface dialog) {
+	                    HaikuTask.this.cancel(true);
+	                }
+	            });
+	        }
+
+	        @Override
+	        protected void onProgressUpdate(String... values) {
+	            super.onProgressUpdate(values);
+	        }
+
+	        @Override
+	        protected Boolean doInBackground(Object... params) {
+	            boolean succeeded = false;
+	                 
+	                startingNumber = (Integer) params[1];
+	                int endNumber = startingNumber + PUBLIC_HAIKU_BATCH_SIZE;
+	                
+	                SharedPreferences settings = getSharedPreferences(HAIKU_PREFERENCES, Context.MODE_PRIVATE);
+
+				String startNumber = new Integer(startingNumber).toString();
+				String endNum = new Integer(endNumber).toString();
+				String last = "currHN=" + startNumber + "&nextHN=" + endNum;
+	                String url = params[0] + "?" + last;
+
+	                String source = retrieveStreamFromGet(url);
+
+	                if(source != null)
+	                {
+	              	     	         
+	                   Gson gson2 = new Gson();
+
+	                   LargeHaikuPlusUrl [] largeHaikus = gson2.fromJson(source, LargeHaikuPlusUrl [].class);
+	               
+	                  for(int i = 0; i < largeHaikus.length; i++)
+	                  {
+	           	       
+	                  //
+	            	 int databaseRangeNumber = largeHaikus[i].getDatabaseRangeNumber();
+	            	 
+	            	 String uniqueIdForHiakuImage = largeHaikus[i].getHaikuImageUniqueID();
+
+	                  }
+	                  
+	                  if(largeHaikus.length > 0)
+	                  {
+	                	 if(largeHaikus.length == 1)
+	                	 {
+	                		 if(largeHaikus[0].getTitle().equals("Empty"))
+	                		 {
+	                			 succeeded = false; 
+	                		 }
+	                		 
+	                	 }
+	                  succeeded = true;
+	                  }
+	               
+	                }
+	           
+	            return succeeded;
+	       
+	        }
+	        
+	    }    
+
+	 
+	 private class HaikuImageTask extends AsyncTask<Object, String, Boolean> {
+	        private static final String DEBUG_TAG = "PublicHaikusActivity$HaikuImageTask";
+
+	       Drawable image = null;
+	        ProgressDialog pleaseWaitDialog;
+
+	        @Override
+	        protected void onCancelled() {
+
+				if(pleaseWaitDialog != null)
+					pleaseWaitDialog.dismiss();
+	        }
+
+	        @Override
+	        protected void onPostExecute(Boolean result) {
+	           
+	            if (result) {
+	            	if(image != null)
+	            	{
+	            	haikuImage.setImageDrawable(image);
+	            	}
+	            	else
+	            	{
+	            	haikuImage.setImageResource(R.drawable.haiku_head2);	
+	            	}
+	            } else {
+	            	haikuImage.setImageResource(R.drawable.haiku_head2);
+	            }
+
+				if(pleaseWaitDialog != null)
+					pleaseWaitDialog.dismiss();
+	        }
+
+	        @Override
+	        protected void onPreExecute() {
+	        	// In this.... it's just an annoyance to do a progressDialog
+
+	           pleaseWaitDialog = ProgressDialog.show(PublicHaikusActivity.this, "Haikus", "Downloading haiku photo", true, true);
+	            pleaseWaitDialog.setOnCancelListener(new OnCancelListener() {
+	                @Override
+					public void onCancel(DialogInterface dialog) {
+	                  HaikuImageTask.this.cancel(true);
+	               }
+	          });
+	          
+	          pleaseWaitDialog.hide();
+	        }
+
+	        @Override
+	        protected void onProgressUpdate(String... values) {
+	            super.onProgressUpdate(values);
+	        }
+
+	        @Override
+	        protected Boolean doInBackground(Object... params) {
+	            boolean succeeded = false;
+
+                int currentHaikuNumber = (Integer)params[0];
+	            
+	            String memberThumnailUrl = getHaikuThumbnailUrl(currentHaikuNumber);
+
+     		    HttpURLConnection urlConnection = null;
+	            
+	            try
+	            {
+
+		            URL myUrl = new URL(memberThumnailUrl);
+		           
+		            urlConnection = (HttpURLConnection) myUrl.openConnection();
+		        		 
+		            InputStream in = new BufferedInputStream(urlConnection.getInputStream());
+		     
+		        		   
+		        		   
+	            Bitmap bmp = BitmapFactory.decodeStream(in);
+	            Resources res = getResources(); 
+	            image =  new BitmapDrawable(res,  bmp);
+	            
+	            
+	            succeeded = true;
+	            
+	           
+	            
+		        } catch (Exception e) {
+		          
+
+			        succeeded = false;
+		            
+		        }
+	            finally {
+	            	
+	            	if(urlConnection != null)
+	            	
+	            	urlConnection.disconnect();
+       		   }
+	           
+	            return succeeded;
+	       
+	        }
+	        
+	    }  
+	 
+	 
+	 private class MemberImageTask extends AsyncTask<Object, String, Boolean> {
+	        private static final String DEBUG_TAG = "PublicHaikusActivity$MemberImageTask";
+
+	       Drawable image = null;
+	        ProgressDialog pleaseWaitDialog;
+
+	        @Override
+	        protected void onCancelled() {
+
+				if(pleaseWaitDialog != null)
+					pleaseWaitDialog.dismiss();
+	        }
+
+	        @Override
+	        protected void onPostExecute(Boolean result) {
+	           
+	            if (result) {
+	            	if(image != null)
+	            	{
+	            	memberImage.setImageDrawable(image);
+	            	}
+	            	else
+	            	{
+	            	memberImage.setImageResource(R.drawable.haiku_head2);	
+	            	}
+	            } else {
+	            	memberImage.setImageResource(R.drawable.haiku_head2);
+	            }
+
+				if(pleaseWaitDialog != null)
+					pleaseWaitDialog.dismiss();
+	        }
+
+	        @Override
+	        protected void onPreExecute() {
+	        	// In this.... it's just an annoyance to do a progressDialog
+	        	
+	        	
+	           pleaseWaitDialog = ProgressDialog.show(PublicHaikusActivity.this, "Haikus", "Downloading haiku photo", true, true);
+	           pleaseWaitDialog.setOnCancelListener(new OnCancelListener() {
+	                @Override
+					public void onCancel(DialogInterface dialog) {
+	                  MemberImageTask.this.cancel(true);
+	               }
+	          });
+	          
+	          pleaseWaitDialog.hide();
+	        }
+
+	        @Override
+	        protected void onProgressUpdate(String... values) {
+	            super.onProgressUpdate(values);
+	        }
+
+	        @Override
+	        protected Boolean doInBackground(Object... params) {
+	            boolean succeeded = false;
+	            
+	            int currentHaikuNumber = (Integer)params[0];
+	            
+	            String memberThumnailUrl = getMemberThumbnailUrl(currentHaikuNumber);
+	            HttpURLConnection urlConnection = null;            
+	            
+	            try
+	            {
+	             
+		             URL myUrl = new URL(memberThumnailUrl);
+		             urlConnection = (HttpURLConnection) myUrl.openConnection();
+		        		 
+		             InputStream in = new BufferedInputStream(urlConnection.getInputStream());
+		        
+	                 Bitmap bmp = BitmapFactory.decodeStream(in);
+	                 Resources res = getResources(); 
+	                 image =  new BitmapDrawable(res,  bmp);
+	            
+	            
+	            succeeded = true;
+	            
+		        } catch (Exception e) {
+		          
+
+			        succeeded = false;
+		            
+		        }
+	            finally {
+	            	
+	            	if(urlConnection != null)
+	            	
+	            	urlConnection.disconnect();
+    		   }
+	           
+	            return succeeded;
+	       
+	        }
+	        
+	    }   
+	 
+
+
+	private String retrieveStreamFromGet(String url2)
+	{
+		String output = "";
+		InputStream stream = null;
+		HttpURLConnection urlConnection=null;
+		try {
+			URL url = new URL(url2);
+			urlConnection = (HttpURLConnection) url.openConnection();
+			urlConnection.setRequestMethod("GET");
+			urlConnection.setUseCaches(false);
+			urlConnection.setConnectTimeout(10000);
+			urlConnection.setReadTimeout(10000);
+			urlConnection.connect();
+			int HttpResult =urlConnection.getResponseCode();
+			if(HttpResult == HttpURLConnection.HTTP_OK){
+
+				BufferedReader br = new BufferedReader(new InputStreamReader(urlConnection.getInputStream()));
+				StringBuilder sb = new StringBuilder();
+				String line;
+				while ((line = br.readLine()) != null) {
+					sb.append(line+"\n");
+				}
+				br.close();
+				return sb.toString();
+
+
+			}else{
+				System.out.println(urlConnection.getResponseMessage());
+			}
+		} catch (MalformedURLException e) {
+
+			e.printStackTrace();
+		}
+		catch (IOException e) {
+
+			e.printStackTrace();
+
+		}finally{
+			if(urlConnection!=null)
+				urlConnection.disconnect();
+		}
+		return null;
+	}
+	  
+	  private void sendHaiku()
+		 {
+		  
+		    
+			 
+			 Intent emailIntent = new Intent(android.content.Intent.ACTION_SEND);  
+			 int currentHaikuNumber = mHaikuSettings.getInt(HAIKU_PREFERENCES_CURRENT_HAIKU, 1);
+			 
+			 String theHaiku = getHaikuText(currentHaikuNumber);
+			 String haikuTitle = getHaikuTitle(currentHaikuNumber);
+			  SharedPreferences prefs = getSharedPreferences(HAIKU_PREFERENCES, Context.MODE_PRIVATE);
+	           String currentFriendName = prefs.getString(CURRENT_FRIEND_NAME, "");
+	           String currentFriendEmail = prefs.getString(CURRENT_FRIEND_EMAIL, "");
+
+	           
+	           String haikuText = haikuTitle + "\n" + "\n" + theHaiku;
+	           
+	           emailIntent.putExtra(android.content.Intent.EXTRA_EMAIL, currentFriendEmail);  
+	           emailIntent.putExtra(android.content.Intent.EXTRA_SUBJECT, "Haiku For You");
+	           emailIntent.setType("plain/text");    
+	           emailIntent.putExtra(android.content.Intent.EXTRA_TEXT, haikuText);  
+	           startActivity(Intent.createChooser(emailIntent, "Send your email in:"));  
+			 
+		 }
+	  
+	  private void sendHaikuTextMessage()
+		 {
+		    Intent smsIntent = new Intent(Intent.ACTION_VIEW);
+			 // for now plain text
+			 
+			 
+			 int currentHaikuNumber = mHaikuSettings.getInt(HAIKU_PREFERENCES_CURRENT_HAIKU, 1);
+			 
+			 String theHaiku = getHaikuText(currentHaikuNumber);
+			 String haikuTitle = getHaikuTitle(currentHaikuNumber);
+		      SharedPreferences prefs = getSharedPreferences(HAIKU_PREFERENCES, Context.MODE_PRIVATE);
+	           String currentFriendName = prefs.getString(CURRENT_FRIEND_NAME, "");
+	           String currentFriendEmail = prefs.getString(CURRENT_FRIEND_EMAIL, "");
+
+	           String haikuText = haikuTitle + "\n" + "\n" + theHaiku;
+	           
+
+	           smsIntent.putExtra("sms_body", haikuText); 
+	           smsIntent.setType("vnd.android-dir/mms-sms");
+	           startActivity(smsIntent);
+			 
+		 }
+		 
+	 	         	 
+	    String [] getSubStringsOfTheHaiku( String theHaiku)
+	    {
+	    	String [] haikuLines = null;
+	    	// first let's try it
+	    	theHaiku.trim();
+	    	
+	    	int count = 0;
+	    	String spaceStr = "\n";
+	    	// will need to test with seperators that right next to each other
+	    	int index = -1;
+	    	
+	    	index = theHaiku.indexOf(spaceStr);
+	    	while(index >= 0)
+	    	{
+	    		++count;
+	    		index += spaceStr.length();
+	    		index = theHaiku.indexOf(spaceStr, index);
+	    	}
+	    	
+	    	// this should end of up being three... be we'll check just in case
+	    	
+	    	haikuLines = new String [count];
+	    	
+	        	
+	    	index = 0;
+	    	int endIndex = 0;
+	    	
+	    	for(int i = 0; i < count; i++)
+	    	{
+	    		endIndex = theHaiku.indexOf(spaceStr, index);
+	    		
+	    		if(endIndex == -1)
+	    		{
+	    			haikuLines[i] = theHaiku.substring(index);  // the last word
+	    		}
+	    		else
+	    		{
+	    			haikuLines[i] = theHaiku.substring(index, endIndex);
+	    			
+	    			index = endIndex + spaceStr.length();
+	    			
+	    		}	
+	    		
+	    		
+	    	}
+
+	    	return haikuLines;
+	    }	
+	    
+	    
+	    public String[] readLines(String theHaiku)
+	    {  
+	    	try
+	    	{
+	      	        
+	        StringReader sr= new StringReader(theHaiku); 
+	          
+	        BufferedReader bufferedReader = new BufferedReader(sr);  
+	        List<String> lines = new ArrayList<String>();  
+	        String line = null;  
+	          
+	        while ((line = bufferedReader.readLine()) != null)   
+	        {  
+	            lines.add(line);  
+	        }  
+	          
+	        bufferedReader.close();  
+	          
+	        return lines.toArray(new String[lines.size()]);  
+	       }  
+           catch(IOException e)  
+          {
+        	  
+          }
+			return null;
+	    }
+	    
+		
+    public String createHTMLHaikuMessageWithImage(String title, String haikuLineOne, String haikuLineTwo, String haikuLineThree, String url)
+     {
+    	 String haikuMessage = "";
+    	 
+    	 String head = "<html><head>" +
+    			  "<title>Haiku For You</title>" +
+    			  " </head>" +
+    			 "<BODY>";
+
+    			String body = "";
+    			
+    			body = "<br><br><br> " +
+    			"<table align = center width = 450><tr><td align = center >" +
+    			"<IMG SRC=\""+ url + "\"><br>"  +
+    			"</td></tr></table> <br>" +
+    			"<table align = center width = 450>" +
+    			"<tr><td align = center><h4><b>" + title + "</b></h4><br><br></td></tr>" +
+    			"<tr><td align = center>" +
+    			"<p><h4><b>" + haikuLineOne + "<br>" + haikuLineTwo + "<br>" + haikuLineThree + "</b></center></b></h4></p></td></tr></table>" ;
+
+    			 String footer = "</Body></html>";
+
+    			 haikuMessage = head + body + footer;
+    	 
+    	 
+    	 return haikuMessage;
+    	 
+     } 		         
+  
+    public boolean isTabletDevice() {
+
+    	boolean notATablet = false;
+    	// my nexus 7 I believe is a large
+        boolean large = 
+             ((this.getResources().getConfiguration().screenLayout & 
+               Configuration.SCREENLAYOUT_SIZE_MASK) == Configuration.SCREENLAYOUT_SIZE_LARGE);
+           // If XLarge, checks if the Generalized Density is at least MDPI (160dpi)
+        if (large) {
+        	
+        	Log.d(DEBUG_TAG, "Yeah,  we are large");
+            DisplayMetrics metrics = new DisplayMetrics();
+            
+            this.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+
+            // MDPI=160, DEFAULT=160, DENSITY_HIGH=240, DENSITY_MEDIUM=160,
+            // DENSITY_TV=213, DENSITY_XHIGH=320
+            if (metrics.densityDpi == DisplayMetrics.DENSITY_DEFAULT
+                      || metrics.densityDpi == DisplayMetrics.DENSITY_HIGH
+                      || metrics.densityDpi == DisplayMetrics.DENSITY_MEDIUM   
+                      || metrics.densityDpi == DisplayMetrics.DENSITY_XHIGH) {
+                      // Yes, this is a tablet!
+                 return true;
+            }
+        }
+        return notATablet;
+    }
+    
+    private boolean isTablet()
+    {
+        Display display = getWindowManager().getDefaultDisplay();
+        DisplayMetrics displayMetrics = new DisplayMetrics();
+        display.getMetrics(displayMetrics);
+
+        int width = displayMetrics.widthPixels / displayMetrics.densityDpi;
+        int height = displayMetrics.heightPixels / displayMetrics.densityDpi;
+        
+        // For My Nexus it seems to be 5.83
+
+        double screenDiagonal = Math.sqrt( width * width + height * height );
+     
+        return (screenDiagonal >= 5.5 );
+    }
+    
+    
+	  public void connectivityMessage(String msg){
+		     Context context = getApplicationContext();
+		     Toast toast = Toast.makeText(context, "", Toast.LENGTH_LONG);
+		     toast.setGravity(Gravity.CENTER, 0, 0);
+		     toast.setText(msg);
+		     toast.show();
+		}
+
+	@Override
+	public Loader<Cursor> onCreateLoader(int arg0, Bundle arg1) {
+		return new CursorLoader(this, HaikuProvider.GET_PUBLIC_HAIKUS_CONTENT_URI,
+				null, null, null, null);
+	}
+
+	@Override
+	public void onLoadFinished(Loader<Cursor> arg0, Cursor cursor) {
+
+	if (cursor.moveToLast()) {
+
+			do {
+
+				LargeHaikuPlus haiku = new LargeHaikuPlus();
+				haiku.setUniqueID(cursor.getString(1));
+
+				haiku.setDateHaikuCreated(new Date(new Long(cursor.getString(2))));
+				haiku.setTitle(cursor.getString(3));
+				haiku.setTheHaiku(cursor.getString(4));
+				haiku.setHaikuViewing(cursor.getString(5));
+				haiku.setHaikuImageUniqueID(cursor.getString(6));    // this will be the url path most of the time
+				
+				haiku.setHaikuRowId(Integer.parseInt(cursor.getString(0)));
+                haiku.setFacebookID(cursor.getString(7));
+				haiku.setMemberThumbNailUrl(cursor.getString(8));
+				haiku.setMemberName(cursor.getString(9));
+				haiku.setThumbNailUrl(cursor.getString(10));
+				// Adding haiku to list
+				int yes= Integer.parseInt(cursor.getString(11));
+				boolean yeah = false;
+				if(yes==1)
+					yeah = true;
+				haiku.setLocalUrl(yeah);
+
+				mHaikus.put(Integer.parseInt(cursor.getString(0)), haiku);
+
+			} while (cursor.moveToPrevious());
+
+			if(cursor.moveToLast())
+			{
+				displayCurrentHaiku(startingHaikuNumber);
+			}
+
+
+			nextButton.setEnabled(true);
+     		previousButton.setEnabled(true);
+			nextButton.setOnClickListener(new View.OnClickListener() {
+				public void onClick(View v) {
+					String previous = "next";
+					handleHaikuAndShowNextOrPreviousHaiku(previous);
+				}
+			});
+
+			previousButton.setOnClickListener(new View.OnClickListener() {
+				public void onClick(View v) {
+					String previous = "previous";
+					handleHaikuAndShowNextOrPreviousHaiku(previous);
+				}
+			});
+		}
+		else
+		{
+			// if this is empty... try calling public
+
+			if(pass  < 1 )
+			{
+				Intent intent = new Intent(getApplicationContext(), PublicHaikuService.class);
+				intent.putExtra(PUBLIC_HAIKU_START_MONTH, 2);
+				intent.putExtra(PUBLIC_HAIKU_END_MONTH, 24);
+				this.startService(intent);
+				handleNoHaikus("One moment while we find some Haiku for you..");
+			}
+			else {
+
+				handleNoHaikus("Sorry, no public haiku. Try later.");
+			}
+
+
+			pass = pass + 1;
+		}
+	}
+
+	@Override
+	public void onLoaderReset(Loader<Cursor> arg0) {
+		// TODO Auto-generated method stub
+
+	}
+
+	}
+
